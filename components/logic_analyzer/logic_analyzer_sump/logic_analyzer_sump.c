@@ -20,7 +20,10 @@
 #include "logic_analyzer_sump.h"
 #include "logic_analyzer_serial.h"
 
-static int first_trigger_pin = 0;
+// No trigger configured by default. PulseView will update this via
+// SUMP_TRIGGER_MASK_CH_A command. Using 0 as default results in an
+// unintended trigger on the first channel when no trigger is set.
+static int first_trigger_pin = -1;
 static int first_trigger_val = 0;
 static int divider = 0;
 static int readCount = 0;
