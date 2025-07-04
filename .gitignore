@@ -1,0 +1,5 @@
+build
+.vscode
+.devcontainer
+.cache
+.clangd

@@ -1,0 +1,1 @@
+Based on https://github.com/ok-home/logic_analyzer, trying to improve pulseview connection.
