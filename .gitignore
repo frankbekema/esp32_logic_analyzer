@@ -3,3 +3,5 @@ build
 .devcontainer
 .cache
 .clangd
+sdkconfig
+sdkconfig.old
