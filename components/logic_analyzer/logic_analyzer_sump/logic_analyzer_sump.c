@@ -52,8 +52,23 @@ static logic_analyzer_hw_param_t la_hw;
 
 static void sump_capture_and_send_samples()
 {
+    // Ensure sane defaults if the host didn't configure them
+    if (readCount <= 0)
+    {
+        readCount = la_hw.min_sample_cnt;
+    }
     la_cfg.number_of_samples = readCount;
-    la_cfg.sample_rate = PULSEVIEW_MAX_SAMPLE_RATE / (divider + 1);
+
+    int requested_rate = la_hw.max_sample_rate / (divider + 1);
+    if (requested_rate > la_hw.max_sample_rate)
+    {
+        requested_rate = la_hw.max_sample_rate;
+    }
+    if (requested_rate < la_hw.min_sample_rate)
+    {
+        requested_rate = la_hw.min_sample_rate;
+    }
+    la_cfg.sample_rate = requested_rate;
     if (first_trigger_pin >= 0)
     {
         la_cfg.pin_trigger = la_cfg.pin[first_trigger_pin];
@@ -174,6 +189,10 @@ static void logic_analyzer_sump_task(void *arg)
 }
 void logic_analyzer_sump(void)
 {
+#if SUMP_UART_PORT_NUM == 0
+    // Disable logging on UART0 so SUMP traffic isn't corrupted
+    esp_log_level_set("*", ESP_LOG_NONE);
+#endif
     xTaskCreate(logic_analyzer_sump_task, "sump_task", 2048 * 4, NULL, 1, NULL);
 }
 
@@ -199,6 +218,13 @@ static void sump_cmd_parser(uint8_t cmdByte)
         sump_write_data((uint8_t *)"1ALS", 4);
         break;
     case SUMP_ARM:
+        // Start a capture with the currently configured parameters.
+        // Some PulseView versions do not send sample count/divider before the
+        // first ARM command, so apply safe defaults here.
+        if (readCount <= 0)
+        {
+            readCount = la_hw.min_sample_cnt;
+        }
         sump_capture_and_send_samples();
         break;
     case SUMP_TRIGGER_MASK_CH_A:
@@ -240,14 +266,14 @@ static void sump_cmd_parser(uint8_t cmdByte)
         sump_getCmd4(cmd.u_cmd8);
         divider = cmd.u_cmd32 & 0xffffff;
         break;
-    case SUMP_SET_READ_DELAY_COUNT: // samples or bytes ??????
+    case SUMP_SET_READ_DELAY_COUNT: // sample count and delay
         sump_getCmd4(cmd.u_cmd8);
-        readCount = ((cmd.u_cmd16[0] & 0xffff) + 1) * 4;
-        delayCount = ((cmd.u_cmd16[1] & 0xffff) + 1) * 4;
+        readCount = (cmd.u_cmd16[0] & 0xffff) + 1;
+        delayCount = (cmd.u_cmd16[1] & 0xffff) + 1;
         break;
     case SUMP_SET_BIG_READ_CNT: // samples or bytes ??????
         sump_getCmd4(cmd.u_cmd8);
-        readCount = (cmd.u_cmd32 + 1) * 4;
+        readCount = cmd.u_cmd32 + 1;
         // delayCount = ((cmd.u_cmd16[1]&0xffff)+1)*4;
         break;
 
