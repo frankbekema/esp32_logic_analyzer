@@ -9,6 +9,7 @@
 
 #include <stdio.h>
 #include <string.h>
+#include "hal/gpio_types.h"
 #include "soc/system_reg.h"
 #include "soc/lcd_cam_struct.h"
 #include "soc/lcd_cam_reg.h"
@@ -17,6 +18,7 @@
 #include "soc/gdma_reg.h"
 #include "esp_rom_gpio.h"
 #include "esp_log.h"
+#include "driver/uart.h"
 
 #include "soc/gpio_sig_map.h"
 #include "soc/gpio_periph.h"
@@ -87,6 +89,8 @@ static void IRAM_ATTR la_ll_dma_isr(void *handle)
 // for sample rate less then 1 MHz -> use ledc
 static void logic_analyzer_ll_set_ledc_pclk(int sample_rate)
 {
+    esp_err_t ret;
+
     // Prepare and then apply the LEDC PWM timer configuration
     ledc_timer_config_t ledc_timer = {
         .speed_mode = LEDC_LOW_SPEED_MODE,
@@ -94,8 +98,19 @@ static void logic_analyzer_ll_set_ledc_pclk(int sample_rate)
         .duty_resolution = LEDC_TIMER_4_BIT,
         .freq_hz = sample_rate, // Set output frequency at 5 kHz
         .clk_cfg = LEDC_AUTO_CLK};
-    ledc_timer_config(&ledc_timer);
+    ret = ledc_timer_config(&ledc_timer);
+    if(ret != ESP_OK) {
+        ESP_LOGE("LOGIC_LL", "Failed configuring ledc timer");
+        return;
+    }
 
+    #ifdef CONFIG_ANALYZER_USE_LEDC_TIMER_FOR_PCLK
+    logic_analyzer_ll_init_ledc();
+    #endif
+}
+
+void logic_analyzer_ll_init_ledc(void)
+{
     // Prepare and then apply the LEDC PWM channel configuration
     ledc_channel_config_t ledc_channel = {
         .speed_mode = LEDC_LOW_SPEED_MODE,
@@ -107,6 +122,7 @@ static void logic_analyzer_ll_set_ledc_pclk(int sample_rate)
         .hpoint = 0};
     ledc_channel_config(&ledc_channel);
 }
+
 #endif
 // sample rate may be not equal to config sample rate -> return real sample rate
 int logic_analyzer_ll_get_sample_rate(int sample_rate)

@@ -75,6 +75,10 @@ extern "C"
     void ll_hi_level_triggered_isr_start(int pin_trigger, int trigger_edge);
     void ll_hi_level_triggered_isr_timeout_stop(void);
 
+    #ifdef CONFIG_ANALYZER_USE_LEDC_TIMER_FOR_PCLK
+    void logic_analyzer_ll_init_ledc(void);
+    #endif
+
 #ifdef __cplusplus
 }
 #endif

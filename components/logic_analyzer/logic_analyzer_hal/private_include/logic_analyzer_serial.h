@@ -23,9 +23,9 @@ static void logic_analyzer_serial_init()
     ESP_ERROR_CHECK(uart_param_config(CONFIG_ANALYZER_UART_PORT_NUMBER, &uart_config));
     ESP_ERROR_CHECK(uart_set_pin(CONFIG_ANALYZER_UART_PORT_NUMBER, CONFIG_ANALYZER_UART_PORT_TX_PIN, CONFIG_ANALYZER_UART_PORT_RX_PIN, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE));
 }
-static void logic_analyzer_serial_write_bytes(const char *buf, size_t size)
+static int logic_analyzer_serial_write_bytes(const char *buf, size_t size)
 {
-    uart_write_bytes(CONFIG_ANALYZER_UART_PORT_NUMBER, buf, size);
+    return uart_write_bytes(CONFIG_ANALYZER_UART_PORT_NUMBER, buf, size);
 }
 static int logic_analyzer_serial_read_bytes(char *buf, size_t size)
 {

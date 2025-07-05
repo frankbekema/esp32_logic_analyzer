@@ -77,6 +77,8 @@ extern "C"
      */
     esp_err_t start_logic_analyzer(logic_analyzer_config_t *config);
 
-#ifdef __cplusplus
+    esp_err_t logic_analyzer_init(logic_analyzer_config_t *config);
+
+    #ifdef __cplusplus
 }
 #endif

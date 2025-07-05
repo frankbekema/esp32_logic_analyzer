@@ -57,9 +57,9 @@
 
 /* Most flags are ignored. */
 #define SUMP_SET_DIVIDER 0x80
-#define SUMP_SET_READ_DELAY_COUNT 0x81
 #define SUMP_SET_FLAGS 0x82
-#define SUMP_SET_BIG_READ_CNT 0x83
+#define SUMP_SET_READ_DELAY_COUNT 0x83
+#define SUMP_SET_BIG_READ_CNT 0x84
 
 // 84 - f9 1000
 // 83 - f9 1000

@@ -19,6 +19,7 @@
 #include "logic_analyzer_sump_definition.h"
 #include "logic_analyzer_sump.h"
 #include "logic_analyzer_serial.h"
+#include <string.h>
 
 static int first_trigger_pin = 0;
 static int first_trigger_val = 0;
@@ -26,8 +27,8 @@ static int divider = 0;
 static int readCount = 0;
 static int delayCount = 0;
 
-static void sump_write_data(uint8_t *buf, int len);
-static void sump_writeByte(uint8_t byte);
+static int sump_write_data(uint8_t *buf, int len);
+static int sump_writeByte(uint8_t byte);
 static void sump_cmd_parser(uint8_t cmdByte);
 static void sump_get_metadata();
 static void sump_capture_and_send_samples();
@@ -50,7 +51,7 @@ static logic_analyzer_hw_param_t la_hw;
 static void sump_capture_and_send_samples()
 {
     la_cfg.number_of_samples = readCount;
-    la_cfg.sample_rate = PULSEVIEW_MAX_SAMPLE_RATE / (divider + 1);
+    la_cfg.sample_rate = PULSEVIEW_MAX_SAMPLE_RATE / divider;
     if (first_trigger_pin >= 0)
     {
         la_cfg.pin_trigger = la_cfg.pin[first_trigger_pin];
@@ -62,8 +63,9 @@ static void sump_capture_and_send_samples()
 
     la_cfg.trigger_edge = first_trigger_val ? GPIO_INTR_POSEDGE : GPIO_INTR_NEGEDGE;
     int err = start_logic_analyzer(&la_cfg);
-    if (err)
+    if (err != ESP_OK)
     {
+        ESP_LOGE("SUMP", "error %d", err);
         return;
     }
 }
@@ -144,24 +146,37 @@ static uint8_t sump_getCmd()
     logic_analyzer_serial_read_bytes((char *) &buf, 1);
     return buf;
 }
-static void sump_write_data(uint8_t *buf, int len)
+
+static int sump_write_data(uint8_t *buf, int len)
 {
-    logic_analyzer_serial_write_bytes( (const char *)buf, len);
+    int sent_bytes = logic_analyzer_serial_write_bytes( (const char *)buf, len);
+    if(sent_bytes != len) {
+        ESP_LOGE("SUMP", "WRITE DATA DIDNT SEND EVERYTHING, QUEUED: %d, SENT: %d", len, sent_bytes);
+    }
+    return sent_bytes;
 }
-static void sump_writeByte(uint8_t byte)
+
+static int sump_writeByte(uint8_t byte)
 {
-    logic_analyzer_serial_write_bytes( (const char *) &byte, 1);
+    return sump_write_data(&byte, 1);
 }
 
 // loop read sump command
 static void logic_analyzer_sump_task(void *arg)
 {
+    esp_err_t ret;
+
     // read hw parametrs -> remove -> may by on metadata
     la_hw.current_channels = la_cfg.number_channels;
     la_hw.current_psram = la_cfg.samples_to_psram;
     logic_analyzer_get_hw_param(&la_hw);
 
-    logic_analyzer_serial_init();
+    ret = logic_analyzer_init(&la_cfg);
+    if(ret != ESP_OK) {
+        while(1) {
+            ESP_LOGE("SUMP", "Failed to initialize %d", ret);
+        }
+    }
 
     while (1)
     {
@@ -233,13 +248,12 @@ static void sump_cmd_parser(uint8_t cmdByte)
     case SUMP_TRIGGER_CONFIG_CH_D:
         sump_getCmd4(cmd.u_cmd8);
         break;
-    case SUMP_SET_DIVIDER: // divider from freq ????
+    case SUMP_SET_DIVIDER: // divider from freq 100MHz
         sump_getCmd4(cmd.u_cmd8);
-        divider = cmd.u_cmd32 & 0xffffff;
+        divider = (cmd.u_cmd32 + 1) & 0xffffff;
         break;
     case SUMP_SET_READ_DELAY_COUNT: // samples or bytes ??????
         sump_getCmd4(cmd.u_cmd8);
-        readCount = ((cmd.u_cmd16[0] & 0xffff) + 1) * 4;
         delayCount = ((cmd.u_cmd16[1] & 0xffff) + 1) * 4;
         break;
     case SUMP_SET_BIG_READ_CNT: // samples or bytes ??????
@@ -250,6 +264,7 @@ static void sump_cmd_parser(uint8_t cmdByte)
 
     case SUMP_SET_FLAGS:
         sump_getCmd4(cmd.u_cmd8);
+        ESP_LOGI("SUMP", "FLAGS: %ld", cmd.u_cmd32);
         break;
     case SUMP_GET_METADATA:
         sump_get_metadata();
@@ -263,36 +278,50 @@ static void sump_cmd_parser(uint8_t cmdByte)
 
 static void sump_get_metadata()
 {
+    uint8_t buffer[64];
+    int idx=0;
+
     // read hw parametrs
     la_hw.current_channels = la_cfg.number_channels;
     la_hw.current_psram = la_cfg.samples_to_psram;
     logic_analyzer_get_hw_param(&la_hw);
+
     /* device name */
-    sump_writeByte((uint8_t)0x01);
-    sump_write_data((uint8_t *)"ESP32", 6);
+    buffer[idx++] = 0x01;
+    memcpy(&buffer[idx], "ESP32\0", 6);
+    idx += 6;
+    
     /* firmware version */
-    sump_writeByte((uint8_t)0x02);
-    sump_write_data((uint8_t *)"0.00", 5);
+    buffer[idx++] = 0x02;
+    memcpy(&buffer[idx], "0.00\0", 5);
+    idx += 5;
+
     /* sample memory */
     uint32_t capture_size = (la_hw.current_channels > 4) ? (la_hw.max_sample_cnt * (la_hw.current_channels / 8)) : la_hw.max_sample_cnt; // buff size bytes. 4 channels send as 8 channels
-    sump_writeByte((uint8_t)0x21);
-    sump_writeByte((uint8_t)(capture_size >> 24) & 0xFF);
-    sump_writeByte((uint8_t)(capture_size >> 16) & 0xFF);
-    sump_writeByte((uint8_t)(capture_size >> 8) & 0xFF);
-    sump_writeByte((uint8_t)(capture_size >> 0) & 0xFF);
+    buffer[idx++] = 0x21;
+    buffer[idx++] = (uint8_t)(capture_size >> 24) & 0xFF;
+    buffer[idx++] = (uint8_t)(capture_size >> 16) & 0xFF;
+    buffer[idx++] = (uint8_t)(capture_size >> 8) & 0xFF;
+    buffer[idx++] = (uint8_t)(capture_size >> 0) & 0xFF;
+
     /* sample rate defined on HW */
     uint32_t capture_speed = la_hw.max_sample_rate;
-    sump_writeByte((uint8_t)0x23);
-    sump_writeByte((uint8_t)(capture_speed >> 24) & 0xFF);
-    sump_writeByte((uint8_t)(capture_speed >> 16) & 0xFF);
-    sump_writeByte((uint8_t)(capture_speed >> 8) & 0xFF);
-    sump_writeByte((uint8_t)(capture_speed >> 0) & 0xFF);
+    buffer[idx++] = 0x23;
+    buffer[idx++] = (uint8_t)(capture_speed >> 24) & 0xFF;
+    buffer[idx++] = (uint8_t)(capture_speed >> 16) & 0xFF;
+    buffer[idx++] = (uint8_t)(capture_speed >> 8) & 0xFF;
+    buffer[idx++] = (uint8_t)(capture_speed >> 0) & 0xFF;
+
     /* number of probes */
-    sump_writeByte((uint8_t)0x40);
-    sump_writeByte((la_hw.current_channels > 4) ? ((uint8_t)la_hw.current_channels & 0xff) : 8); // 8/16 -> 4 channels send as 8 channels
+    buffer[idx++] = 0x40;
+    buffer[idx++] = (la_hw.current_channels > 4) ? ((uint8_t)la_hw.current_channels & 0xff) : 8; // 8/16 -> 4 channels send as 8 channels
+
     /* protocol version (2) */
-    sump_writeByte((uint8_t)0x41);
-    sump_writeByte((uint8_t)0x02);
+    buffer[idx++] = 0x41;
+    buffer[idx++] = 0x02;
+
     /* end of data */
-    sump_writeByte((uint8_t)0x00);
+    buffer[idx++] = 0x0;
+    
+    sump_write_data(buffer, idx);
 }
